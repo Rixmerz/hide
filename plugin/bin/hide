@@ -1,0 +1,106 @@
+#!/usr/bin/env node
+// hide — use secrets stored in the OS keychain without seeing them.
+//
+//   hide list                         names and dates, never values
+//   hide exec NAME [NAME...] -- cmd   run cmd with the secrets as env vars;
+//                                     their values are masked in its output
+//   hide add NAME                     store a secret typed at a hidden prompt
+//                                     (or piped on stdin)
+//   hide rm NAME                      delete a secret
+//
+// There is deliberately no command that prints a value.
+
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
+import { loadSecret, saveSecret, deleteSecret, readIndex } from '../lib/store.mjs';
+import { VAR_NAME } from '../lib/detect.mjs';
+import { maskVariants, maskStream } from '../lib/mask.mjs';
+
+function fail(message, code = 2) {
+  process.stderr.write(`hide: ${message}\n`);
+  process.exit(code);
+}
+
+function list() {
+  const index = readIndex();
+  const names = Object.keys(index).sort((a, b) => a.localeCompare(b));
+  if (names.length === 0) return console.log('No secrets stored.');
+  for (const name of names) {
+    const { kind = '', updatedAt = '' } = index[name];
+    console.log(`${name.padEnd(28)} ${kind.padEnd(18)} ${updatedAt.slice(0, 10)}`);
+  }
+}
+
+function exec(args) {
+  const sep = args.indexOf('--');
+  if (sep < 1 || sep === args.length - 1) fail('usage: hide exec NAME [NAME...] -- command [args...]');
+  const names = args.slice(0, sep);
+  let command = args.slice(sep + 1);
+  const secrets = {};
+  for (const name of names) {
+    if (!VAR_NAME.test(name)) fail(`invalid variable name "${name}"`);
+    const value = loadSecret(name);
+    if (value === null) fail(`${name} is not stored. Ask the user to paste it in a prompt so hide can store it.`);
+    secrets[name] = value;
+  }
+  // One argument with spaces is a shell command: run it under sh so that
+  // $NAME, written inside single quotes, expands in the child. On Windows
+  // that is the sh from Git Bash, which Claude Code's Bash tool already needs.
+  if (command.length === 1 && /\s/.test(command[0])) {
+    command = [process.platform === 'win32' ? 'sh' : '/bin/sh', '-c', command[0]];
+  }
+
+  const variants = maskVariants(secrets);
+  const child = spawn(command[0], command.slice(1), {
+    env: { ...process.env, ...secrets },
+    stdio: ['inherit', 'pipe', 'pipe'],
+  });
+  child.stdout.pipe(maskStream(variants)).pipe(process.stdout);
+  child.stderr.pipe(maskStream(variants)).pipe(process.stderr);
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => child.kill(sig));
+  child.on('error', (error) => fail(`cannot run ${command[0]}: ${error.message}`, 127));
+  child.on('close', (code, signal) => {
+    process.exitCode = code ?? (signal ? 128 : 1);
+  });
+}
+
+async function readHidden(question) {
+  if (!process.stdin.isTTY) {
+    const chunks = [];
+    for await (const chunk of process.stdin) chunks.push(chunk);
+    return Buffer.concat(chunks).toString('utf8').replace(/\r?\n$/, '');
+  }
+  process.stdout.write(question);
+  const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+  rl._writeToOutput = () => {}; // do not echo the secret
+  const value = await new Promise((resolve) => rl.question('', resolve));
+  rl.close();
+  process.stdout.write('\n');
+  return value;
+}
+
+async function add([name]) {
+  if (!name || !VAR_NAME.test(name)) fail('usage: hide add NAME   (A-Z, 0-9 and _)');
+  const value = await readHidden(`Value for ${name} (hidden): `);
+  if (!value) fail('empty value, nothing stored');
+  saveSecret(name, value, { kind: 'manual' });
+  console.log(`Stored ${name}. Use it with: hide exec ${name} -- <command>`);
+}
+
+function rm([name]) {
+  if (!name || !VAR_NAME.test(name)) fail('usage: hide rm NAME');
+  if (!deleteSecret(name)) fail(`${name} is not stored`, 1);
+  console.log(`Deleted ${name}.`);
+}
+
+const [cmd, ...rest] = process.argv.slice(2);
+const COMMANDS = { list, ls: list, exec, run: exec, add, set: add, rm, delete: rm };
+if (!COMMANDS[cmd]) {
+  console.log('usage: hide list | hide exec NAME... -- command | hide add NAME | hide rm NAME');
+  process.exit(cmd ? 2 : 0);
+}
+try {
+  await COMMANDS[cmd](rest);
+} catch (error) {
+  fail(error.message);
+}

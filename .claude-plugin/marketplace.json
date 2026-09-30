@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "hide",
+  "description": "Self-hosted marketplace for the hide plugin, so the repo can be added directly without going through an owner namespace.",
+  "owner": {
+    "name": "Juan Pablo Diaz",
+    "email": "juanpablo516@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "hide",
+      "description": "Keeps secrets out of Claude's context: API keys pasted in a prompt are blocked, named in a side terminal, stored in the OS keychain, and used by name through `hide exec`.",
+      "source": "./plugin"
+    }
+  ]
+}
