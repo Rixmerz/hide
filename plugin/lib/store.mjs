@@ -17,7 +17,7 @@ import { VAR_NAME } from './detect.mjs';
 export const SERVICE = process.env.HIDE_SERVICE || 'hide';
 if (!/^[A-Za-z0-9._-]+$/.test(SERVICE)) throw new Error(`hide: invalid HIDE_SERVICE "${SERVICE}"`);
 
-function configDir() {
+export function configDir() {
   if (process.platform === 'win32') return join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'hide');
   return join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'hide');
 }

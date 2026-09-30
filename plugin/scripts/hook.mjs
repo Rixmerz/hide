@@ -3,8 +3,9 @@
 // prompt   UserPromptSubmit. A prompt holding a secret is blocked (exit 2),
 //          so it never reaches the model or the transcript. A side pane asks
 //          for a variable name, the value goes to the keychain, and a clean
-//          copy of the prompt, with `$NAME` in place of the secret, lands on
-//          the clipboard to be sent again.
+//          copy of the prompt, with `$NAME` in place of the secret, is sent
+//          back into Claude's input (tmux, WezTerm, iTerm2) or put on the
+//          clipboard.
 // session  SessionStart. Tells Claude which secret names exist and how to use them.
 // pretool  PreToolUse on Bash. Denies commands that print a keychain value.
 
@@ -18,6 +19,8 @@ import { detectSecrets, preview, replaceAll } from '../lib/detect.mjs';
 import { saveSecret, readIndex } from '../lib/store.mjs';
 import { openPane } from '../lib/pane.mjs';
 import { scrubClaudeFiles } from '../lib/scrub.mjs';
+import { resendTarget } from '../lib/resend.mjs';
+import { allow, isAllowed } from '../lib/allow.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HIDE_BIN = join(HERE, '..', 'bin', 'hide');
@@ -51,14 +54,15 @@ function copyToClipboard(text) {
   return tools.some(([cmd, args]) => spawnSync(cmd, args, { input: text }).status === 0);
 }
 
-// history.jsonl may be appended after this hook returns, so the scrub runs
-// again from a detached process. Secrets reach it over a pipe, not argv.
-function scrubLater(pairs, transcriptPath) {
-  const child = spawn(process.execPath, [join(HERE, 'rescrub.mjs')], {
+// Work that must happen after Claude Code has handled the block: resending
+// the clean prompt and scrubbing history again. Secrets reach the detached
+// process over a pipe, not argv.
+function runAfter(job) {
+  const child = spawn(process.execPath, [join(HERE, 'after.mjs')], {
     detached: true,
     stdio: ['pipe', 'ignore', 'ignore'],
   });
-  child.stdin.end(JSON.stringify({ pairs, transcriptPath }));
+  child.stdin.end(JSON.stringify(job));
   child.unref();
 }
 
@@ -80,7 +84,7 @@ function referencedNames(prompt) {
 
 async function onPrompt(event) {
   const prompt = event.prompt ?? '';
-  const found = detectSecrets(prompt);
+  const found = detectSecrets(prompt).filter((s) => !isAllowed(s.value));
 
   if (found.length === 0) {
     const names = referencedNames(prompt);
@@ -100,6 +104,7 @@ async function onPrompt(event) {
     const pane = openPane(dir, [process.execPath, join(HERE, 'ask.mjs'), dir]);
     const answer = pane ? await waitForAnswer(dir) : { cancel: true, noPane: true };
 
+    if (!answer.cancel) allow(found.filter((_, i) => !answer.names[i]).map((s) => s.value));
     if (!answer.cancel && answer.names.every((n) => n === null)) {
       holdsSecret = false; // every match was a false positive: let the prompt through
       return;
@@ -113,11 +118,16 @@ async function onPrompt(event) {
         saveSecret(name, secret.value, { kind: secret.kind });
         stored.push(name);
       }
-      clean = replaceAll(clean, secret.value, name ? `$${name}` : '[hide:REDACTED]');
+      // A skipped value is not a secret and stays; an unnamed one after a cancel goes.
+      if (name) clean = replaceAll(clean, secret.value, `$${name}`);
+      else if (answer.cancel) clean = replaceAll(clean, secret.value, '[hide:REDACTED]');
     }
-    const pairs = found.map((s, i) => [s.value, (!answer.cancel && answer.names[i]) || 'REDACTED']);
+    const pairs = found
+      .map((s, i) => [s.value, answer.cancel ? 'REDACTED' : answer.names[i]])
+      .filter(([, name]) => name);
     scrubClaudeFiles(pairs, { transcriptPath: event.transcript_path });
-    scrubLater(pairs, event.transcript_path);
+    const target = answer.cancel ? null : resendTarget();
+    runAfter({ pairs, transcriptPath: event.transcript_path, resend: target ? { target, text: clean } : null });
 
     if (answer.cancel) {
       const why = answer.noPane
@@ -125,12 +135,14 @@ async function onPrompt(event) {
         : 'no name was given, nothing was stored.';
       return `hide: blocked a prompt holding a secret (${summary}). Claude did not see it. ${why}`;
     }
+    const head = `hide: stored ${stored.map((n) => `$${n}`).join(', ')} in the keychain. Claude did not see the secret.`;
+    if (target) return `${head}\nSending the prompt again with the variable names in place of the values…`;
     const copied = copyToClipboard(clean);
     return [
-        `hide: stored ${stored.map((n) => `$${n}`).join(', ')} in the keychain. Claude did not see the secret.`,
-        copied
-          ? 'The prompt was held back; a clean copy with the variable names is on your clipboard. Paste it and send.'
-          : 'The prompt was held back. Send it again writing the variable name instead of the value.',
+      head,
+      copied
+        ? 'The prompt was held back; a clean copy with the variable names is on your clipboard. Paste it and send.'
+        : 'The prompt was held back. Send it again writing the variable name instead of the value.',
     ].join('\n');
   } finally {
     rmSync(dir, { recursive: true, force: true });

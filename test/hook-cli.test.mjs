@@ -29,6 +29,13 @@ function sandbox() {
       CLAUDE_CONFIG_DIR: join(base, 'claude'),
       HIDE_PANE: 'none',
       HIDE_WAIT_SECONDS: '10',
+      // Never type into the terminal running the tests.
+      HIDE_RESEND: '0',
+      TMUX: '',
+      TMUX_PANE: '',
+      WEZTERM_PANE: '',
+      ITERM_SESSION_ID: '',
+      TERM_PROGRAM: '',
     },
   };
 }
@@ -110,13 +117,27 @@ test('naming the secret stores it and the CLI can use it without printing it', a
   assert.match(out.hookSpecificOutput.additionalContext, /\$GH_TOKEN/);
 });
 
-test('skipping every match lets the prompt through', async () => {
+test('skipping every match lets the prompt through, and the value is not asked again', async () => {
   const { env, base } = sandbox();
-  const hook = runHookAsync(env, hookEvent(`the sample token ${fakes.github} is from the docs`));
+  const prompt = hookEvent(`the sample token ${fakes.github} is from the docs`);
+  const hook = runHookAsync(env, prompt);
   await answerFromPane(base, { names: [null] });
   const r = await hook;
   assert.equal(r.status, 0);
   assert.equal(runSync([HIDE, 'list'], env).stdout.trim(), 'No secrets stored.');
+
+  const again = runSync([HOOK, 'prompt'], env, prompt);
+  assert.equal(again.status, 0, 'an allowed value must not block or open the pane');
+  assert.ok(!readFileSync(join(base, 'config', 'hide', 'allowed.json'), 'utf8').includes(fakes.github), 'only a digest is kept');
+});
+
+test('resend targets the pane Claude runs in, and only where that is possible', async () => {
+  const { resendTarget } = await import('../plugin/lib/resend.mjs');
+  assert.deepEqual(resendTarget({ TMUX: '/tmp/tmux-1/default,1,0', TMUX_PANE: '%3' }), { via: 'tmux', pane: '%3' });
+  assert.deepEqual(resendTarget({ WEZTERM_PANE: '7' }), { via: 'wezterm', pane: '7' });
+  assert.equal(resendTarget({ TMUX: 'x', TMUX_PANE: '%3', HIDE_RESEND: '0' }), null);
+  assert.equal(resendTarget({ TERM_PROGRAM: 'Apple_Terminal' }), null);
+  assert.equal(resendTarget({ WT_SESSION: 'abc' }), null);
 });
 
 test('SessionStart announces stored names, never values', () => {
