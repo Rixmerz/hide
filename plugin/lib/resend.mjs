@@ -5,8 +5,8 @@
 // prompt is not submitted at its first newline.
 //
 // Only terminals that can write into a specific existing pane support this:
-// tmux, WezTerm and iTerm2. Everywhere else the clean prompt goes to the
-// clipboard instead.
+// tmux, WezTerm, iTerm2 and Orca. Everywhere else the clean prompt goes to
+// the clipboard instead.
 
 import { spawnSync } from 'node:child_process';
 import { writeFileSync, rmSync, mkdtempSync } from 'node:fs';
@@ -30,6 +30,9 @@ export function resendTarget(env = process.env) {
   if (env.WEZTERM_PANE) return { via: 'wezterm', pane: env.WEZTERM_PANE };
   if (env.TERM_PROGRAM === 'iTerm.app' && process.platform === 'darwin' && itermSessionId(env)) {
     return { via: 'iterm2', session: itermSessionId(env) };
+  }
+  if (env.TERM_PROGRAM === 'Orca' && env.ORCA_TERMINAL_HANDLE && process.platform !== 'win32') {
+    return { via: 'orca', terminal: env.ORCA_TERMINAL_HANDLE };
   }
   return null;
 }
@@ -98,13 +101,20 @@ function itermEnter(target) {
   return spawnSync('osascript', ['-e', script]).status === 0;
 }
 
+// `orca terminal send --text` writes the bytes as given, escapes included.
+// The text only ever holds the clean prompt, so argv is fine here.
+function orcaSend(target, bytes) {
+  return spawnSync('orca', ['terminal', 'send', '--terminal', target.terminal, '--text', bytes, '--json']).status === 0;
+}
+
 const SENDERS = {
   tmux: [tmux, tmuxEnter],
   wezterm: [wezterm, weztermEnter],
   iterm2: [iterm, itermEnter],
+  orca: [(target, text) => orcaSend(target, PASTE_START + text + PASTE_END), (target) => orcaSend(target, '\r')],
 };
 
-// iTerm2 is given the markers itself; tmux and WezTerm add them.
+// iTerm2 and Orca are given the markers; tmux and WezTerm add them.
 export async function resend(target, text) {
   const [paste, enter] = SENDERS[target.via];
   if (!paste(target, text)) return false;

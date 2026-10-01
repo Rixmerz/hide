@@ -55,6 +55,17 @@ const OPENERS = [
     },
   },
   {
+    name: 'orca',
+    // Orca exports its own CLI on PATH and a handle per terminal. The command
+    // is typed into a fresh shell, so `exec` makes the pane close with it.
+    when: (env) => env.TERM_PROGRAM === 'Orca' && env.ORCA_TERMINAL_HANDLE && process.platform !== 'win32',
+    open: (launcher, env) =>
+      spawnSync('orca', [
+        'terminal', 'split', '--terminal', env.ORCA_TERMINAL_HANDLE,
+        '--direction', 'horizontal', '--command', `exec /bin/sh ${launcher}`, '--json',
+      ]).status === 0,
+  },
+  {
     name: 'windows-terminal',
     when: (env) => process.platform === 'win32' && env.WT_SESSION,
     open: (_launcher, _env, argv) =>

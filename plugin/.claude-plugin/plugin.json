@@ -1,6 +1,6 @@
 {
   "name": "hide",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Keeps secrets out of Claude's context: a prompt holding an API key is blocked before the model sees it, a side terminal asks for a variable name, the value goes to the OS keychain, and Claude only ever gets the name and a `hide exec` command that injects it and masks it in the output.",
   "author": {
     "name": "Juan Pablo Diaz",

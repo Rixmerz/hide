@@ -36,6 +36,7 @@ function sandbox() {
       WEZTERM_PANE: '',
       ITERM_SESSION_ID: '',
       TERM_PROGRAM: '',
+      ORCA_TERMINAL_HANDLE: '',
     },
   };
 }
@@ -138,6 +139,10 @@ test('resend targets the pane Claude runs in, and only where that is possible', 
   assert.equal(resendTarget({ TMUX: 'x', TMUX_PANE: '%3', HIDE_RESEND: '0' }), null);
   assert.equal(resendTarget({ TERM_PROGRAM: 'Apple_Terminal' }), null);
   assert.equal(resendTarget({ WT_SESSION: 'abc' }), null);
+  if (process.platform !== 'win32') {
+    assert.deepEqual(resendTarget({ TERM_PROGRAM: 'Orca', ORCA_TERMINAL_HANDLE: 'term_1' }), { via: 'orca', terminal: 'term_1' });
+  }
+  assert.equal(resendTarget({ TERM_PROGRAM: 'Orca' }), null);
 });
 
 test('SessionStart announces stored names, never values', () => {

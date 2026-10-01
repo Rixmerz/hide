@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.0 — 2026-10-01
+
+- Orca: the name pane opens as a split next to Claude's terminal (`orca terminal split`) and the clean prompt is sent back into it (`orca terminal send`), instead of opening a separate Terminal.app window and using the clipboard.
+
 ## 0.2.0 — 2026-09-30
 
 - The clean prompt is sent back into Claude's input automatically in tmux, WezTerm and iTerm2 (bracketed paste + Enter), instead of only landing on the clipboard.

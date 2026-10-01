@@ -49,7 +49,7 @@ Values never go through a command line, where `ps` could see them. They go over 
 
 ### The side pane
 
-It opens in the first of these that applies: **tmux** (split), **WezTerm** (split), **iTerm2** (vertical split of the exact session running Claude), **Windows Terminal** (split), a new **Terminal.app** window, a new **Windows console**, or a Linux terminal (`x-terminal-emulator`, `gnome-terminal`, `konsole`, `xterm`). The pane only gets masked previews (`sk-pro…ake1 (68 chars)`), never the value.
+It opens in the first of these that applies: **tmux** (split), **WezTerm** (split), **iTerm2** (vertical split of the exact session running Claude), **Orca** (split of the terminal running Claude, through its `orca` CLI; macOS and Linux), **Windows Terminal** (split), a new **Terminal.app** window, a new **Windows console**, or a Linux terminal (`x-terminal-emulator`, `gnome-terminal`, `konsole`, `xterm`). The pane only gets masked previews (`sk-pro…ake1 (68 chars)`), never the value.
 
 For each match you can accept the suggested name, type another, or type `skip` if it isn't a secret. If you skip every match, the prompt goes through unchanged. A skipped value is remembered for 24 hours (only its SHA-256, in `allowed.json` next to the index), so the same false positive does not open the pane again. If you close the pane or wait out the 280-second limit, the prompt stays blocked and nothing is stored.
 
@@ -58,7 +58,7 @@ If no pane can be opened, the prompt stays blocked and hide tells you how to sto
 
 ### Sending the prompt again
 
-A UserPromptSubmit hook can block a prompt but cannot rewrite it, so the clean copy has to be submitted as a new prompt. In **tmux**, **WezTerm** and **iTerm2**, hide types it back into the exact pane Claude runs in, as a bracketed paste (so a multi-line prompt is not cut at its first newline), and presses Enter. It does this about 1 second after the block, once Claude Code is waiting for input again. Everywhere else (Terminal.app, Windows Terminal, VS Code, Linux terminals) the clean prompt goes to the clipboard: paste it and send. Set `HIDE_RESEND=0` to always use the clipboard.
+A UserPromptSubmit hook can block a prompt but cannot rewrite it, so the clean copy has to be submitted as a new prompt. In **tmux**, **WezTerm**, **iTerm2** and **Orca**, hide types it back into the exact pane Claude runs in, as a bracketed paste (so a multi-line prompt is not cut at its first newline), and presses Enter. It does this about 1 second after the block, once Claude Code is waiting for input again. Everywhere else (Terminal.app, Windows Terminal, VS Code, Linux terminals) the clean prompt goes to the clipboard: paste it and send. Set `HIDE_RESEND=0` to always use the clipboard.
 
 ### Detected formats
 
