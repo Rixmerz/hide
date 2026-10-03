@@ -37,10 +37,35 @@ Values never go through a command line, where `ps` could see them. They go over 
 
 `~/.config/hide/index.json` (`%LOCALAPPDATA%\hide\index.json` on Windows) lists names, kinds and dates, never values. That way the SessionStart hook can tell Claude what exists without touching the keychain.
 
+## In-app pane (Claude Code builds with function hooks)
+
+On a Claude Code build that loads function hooks ("mods"), hide no longer needs a side terminal. `hooks/hide.tsx` catches the prompt at `prompt.submit`, before it enters the session, and opens a pane inside Claude Code:
+
+```
+╭ hide ─────────────────────────────────────────────╮
+│ Secret held back. Claude has not seen this prompt. │
+│ openai sk-pro…ake1 (68 chars)                      │
+│ Variable name: OPENAI_API_KEY            ⏎ store   │
+│ [ Store ]  [ Not a secret ]  [ Cancel ]            │
+│ The value goes to the OS keychain. Claude only     │
+│ gets its name.                                     │
+╰────────────────────────────────────────────────────╯
+```
+
+- **Store** (or Enter) saves the value to the keychain and sends the prompt again with `$NAME` in place of the value, as your own words. Nothing is typed into your terminal and nothing touches the clipboard.
+- **Not a secret** sends the prompt as written and remembers the value for 24 hours, as `skip` does in the side pane.
+- **Cancel** (or Esc) stores nothing and puts the prompt back in the input with the secret replaced by `[hide:REDACTED]`, so you can edit it.
+- An existing name asks once more before it is overwritten.
+- Since the prompt is dropped before it enters the session, the transcript row never shows the value either.
+- `/hide` lists the stored names, kinds and dates.
+
+The pane only ever gets masked previews; the values stay in the hooks module's memory until `scripts/bridge.mjs` hands them to the keychain over stdin. Whatever the pane can't handle (a headless `claude -p` run, a prompt with an image attached, a pane that can't be placed) goes on to the classic `UserPromptSubmit` hook below, which still blocks it.
+
 ## What each piece does
 
 | Piece | Event | Job |
 |---|---|---|
+| `hooks/hide.tsx` | `prompt.submit`, `ui.render` (function hooks) | drops a prompt holding a secret before it enters the session, asks for the name in a pane inside Claude Code, stores it through `scripts/bridge.mjs`, submits the clean prompt; `/hide` lists the names |
 | `scripts/hook.mjs prompt` | UserPromptSubmit | detects secrets, blocks the prompt (exit 2), opens the name pane, stores, resends the clean prompt, scrubs Claude Code's local files; for a prompt that mentions a stored `$NAME`, adds usage instructions to Claude's context |
 | `scripts/hook.mjs session` | SessionStart | tells Claude which names exist and how to use them |
 | `scripts/hook.mjs pretool` | PreToolUse (Bash, PowerShell) | denies commands that would print a keychain value (`security find-generic-password -w`, `secret-tool lookup`, DPAPI `Unprotect`, …) |
@@ -74,11 +99,11 @@ Blocking the prompt keeps the secret from the model and the transcript, but Clau
 
 ## Limits
 
-- **Your own screen still shows it.** Claude Code prints the blocked prompt ("Original prompt: …") in your terminal. The model never receives it.
+- **Your own screen still shows it** with the classic hook: Claude Code prints the blocked prompt ("Original prompt: …") in your terminal. The model never receives it. The in-app pane doesn't have this problem.
 - **Masking matches, it doesn't understand.** `hide exec` masks the exact value, its base64 and URL-encoded forms and each line of a multi-line secret. A command that transforms the value some other way (reversing it, hashing it, printing a slice) can still reveal it. Together with the PreToolUse guard and the skill's rules, this stops accidental exposure. It is not a sandbox against a model trying to exfiltrate. On macOS, any process running as you can read the item through `security`.
 - **Detection is pattern-based.** A secret in an unknown format with no `*_KEY=`/`*_TOKEN=`-style name next to it won't be caught. Add it with `hide add NAME` instead of pasting it.
-- **The clipboard** receives the clean prompt, which has no secrets in it, on terminals where it can't be resent.
-- **The resend types into your terminal.** If you start typing in Claude's input within that second, your text and the resent prompt get mixed.
+- **The clipboard** (classic hook only) receives the clean prompt, which has no secrets in it, on terminals where it can't be resent.
+- **The resend types into your terminal** (classic hook only). If you start typing in Claude's input within that second, your text and the resent prompt get mixed.
 
 ## Environment variables
 
@@ -93,7 +118,9 @@ Blocking the prompt keeps the secret from the model and the transcript, but Clau
 ## Development
 
 ```
-pnpm test           # node --test, no dependencies
+pnpm test                         # node --test, no dependencies
+claude plugin validate ./plugin   # checks the manifest and hooks/hide.tsx
+claude plugin test ./plugin       # runs plugin/tests/*.test.tsx against the engine
 claude --plugin-dir ./plugin
 ```
 

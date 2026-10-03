@@ -1,4 +1,7 @@
 {
+  "modules": [
+    "./hide.tsx"
+  ],
   "hooks": {
     "UserPromptSubmit": [
       {
