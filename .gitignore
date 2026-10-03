@@ -8,3 +8,6 @@ node_modules/
 *.jks
 credentials.json
 service-account*.json
+
+# Written by Claude Code when it loads the plugin from a folder (--plugin-dir)
+plugin/.claude-plugin/types/
