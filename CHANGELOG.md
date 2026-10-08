@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1 — 2026-10-08
+
+- macOS: long values (a GCP service account key) failed to store, because `security -i` drops anything past ~4 KB on a line, and the prompt came back redacted. They are now split across keychain items `NAME.part1…N`; reads and deletes follow them.
+
 ## 0.4.0 — 2026-10-03
 
 - In-app pane on Claude Code builds with function hooks (`hooks/hide.tsx`): a prompt holding a secret is dropped at `prompt.submit` and named in a pane inside Claude Code, instead of a side terminal. The clean prompt is submitted again as the user's own words, with no keystroke injection or clipboard, and the transcript row never shows the value.

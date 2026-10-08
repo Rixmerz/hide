@@ -87,6 +87,22 @@ function run(cmd, args, input) {
   return r;
 }
 
+// `security -i` drops anything past ~4 KB on a line, so a long value (a GCP
+// service account key) is split: the NAME item holds `hide-chunks:N` and the
+// base64 goes to items NAME.part1 … NAME.partN.
+const KEYCHAIN_CHUNK = 2048;
+const CHUNKED = 'hide-chunks:';
+
+function keychainRead(account) {
+  const r = run('security', ['find-generic-password', '-s', SERVICE, '-a', account, '-w']);
+  return r.status === 0 ? r.stdout.trim() : null;
+}
+
+function chunkAccounts(name, head) {
+  const n = head?.startsWith(CHUNKED) ? Number(head.slice(CHUNKED.length)) : 0;
+  return Array.from({ length: n }, (_, i) => `${name}.part${i + 1}`);
+}
+
 function checkName(name) {
   if (!VAR_NAME.test(name)) throw new Error(`hide: invalid variable name "${name}" (use A-Z, 0-9, _)`);
 }
@@ -96,9 +112,17 @@ export function saveSecret(name, value, meta = {}) {
   const b = backend();
   if (b === 'keychain') {
     const b64 = Buffer.from(value, 'utf8').toString('base64');
-    const cmd = `add-generic-password -U -s ${SERVICE} -a ${name} -l "${SERVICE}: ${name}" -w ${b64}\n`;
+    const parts = b64.length > KEYCHAIN_CHUNK ? b64.match(new RegExp(`.{1,${KEYCHAIN_CHUNK}}`, 'g')) : [];
+    const items = parts.length
+      ? [[name, `${CHUNKED}${parts.length}`], ...parts.map((p, i) => [`${name}.part${i + 1}`, p])]
+      : [[name, b64]];
+    const cmd = items
+      .map(([account, w]) => `add-generic-password -U -s ${SERVICE} -a ${account} -l "${SERVICE}: ${name}" -w ${w}\n`)
+      .join('');
     const r = run('security', ['-i'], cmd);
-    if (r.status !== 0 || /error/i.test(r.stderr)) throw new Error(`hide: keychain write failed: ${r.stderr.trim()}`);
+    if (r.status !== 0 || /error|unknown command/i.test(r.stderr)) {
+      throw new Error(`hide: keychain write failed: ${r.stderr.trim().slice(0, 200)}`);
+    }
   } else if (b === 'secret-service') {
     const r = run('secret-tool', ['store', `--label=${SERVICE}: ${name}`, 'service', SERVICE, 'account', name], value);
     if (r.status !== 0) throw new Error(`hide: secret-tool store failed: ${r.stderr.trim()}`);
@@ -122,9 +146,15 @@ export function loadSecret(name) {
   checkName(name);
   const b = backend();
   if (b === 'keychain') {
-    const r = run('security', ['find-generic-password', '-s', SERVICE, '-a', name, '-w']);
-    if (r.status !== 0) return null;
-    return Buffer.from(r.stdout.trim(), 'base64').toString('utf8');
+    const head = keychainRead(name);
+    if (head === null) return null;
+    let b64 = head;
+    if (head.startsWith(CHUNKED)) {
+      const parts = chunkAccounts(name, head).map(keychainRead);
+      if (parts.includes(null)) return null;
+      b64 = parts.join('');
+    }
+    return Buffer.from(b64, 'base64').toString('utf8');
   }
   if (b === 'secret-service') {
     const r = run('secret-tool', ['lookup', 'service', SERVICE, 'account', name]);
@@ -140,7 +170,11 @@ export function loadSecret(name) {
 export function deleteSecret(name) {
   checkName(name);
   const b = backend();
-  if (b === 'keychain') run('security', ['delete-generic-password', '-s', SERVICE, '-a', name]);
+  if (b === 'keychain') {
+    for (const account of [name, ...chunkAccounts(name, keychainRead(name))]) {
+      run('security', ['delete-generic-password', '-s', SERVICE, '-a', account]);
+    }
+  }
   else if (b === 'secret-service') run('secret-tool', ['clear', 'service', SERVICE, 'account', name]);
   else if (b === 'dpapi') rmSync(dpapiPath(name), { force: true });
   else {
